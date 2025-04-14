@@ -55,12 +55,32 @@ export abstract class BaseParser implements Parser {
    * @returns A promise that resolves to the standardized dependency graph
    */
   public async parse(projectType: ProjectType): Promise<Graph> {
+    // Add detailed timing for the language-specific parsing step
+    console.log(`[Performance] Starting language-specific parsing for ${this.language}`);
+    const parseStartTime = performance.now();
+    
     // Parse project to get language-specific dependencies
     const languageSpecificDeps = await this.parseToLanguageSpecific(
       projectType
     );
-
+    
+    // Log parsing time
+    const parseEndTime = performance.now();
+    const parseElapsedTime = parseEndTime - parseStartTime;
+    console.log(`[Performance] Completed language-specific parsing for ${this.language} in ${parseElapsedTime.toFixed(2)}ms`);
+    
+    // Add timing for the conversion step
+    console.log(`[Performance] Starting conversion to standard format for ${this.language}`);
+    const convertStartTime = performance.now();
+    
     // Convert to standardized format
-    return convertDependencies(languageSpecificDeps);
+    const result = convertDependencies(languageSpecificDeps);
+    
+    // Log conversion time
+    const convertEndTime = performance.now();
+    const convertElapsedTime = convertEndTime - convertStartTime;
+    console.log(`[Performance] Completed conversion for ${this.language} in ${convertElapsedTime.toFixed(2)}ms`);
+    
+    return result;
   }
 }

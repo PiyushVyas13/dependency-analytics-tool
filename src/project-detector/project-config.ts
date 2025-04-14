@@ -35,7 +35,8 @@ export const PROJECT_CONFIGS: Record<string, ProjectTypeConfig> = {
     "gradle": {
         requiredFiles: [
             "build.gradle",
-            "build.gradle.kts"
+            "build.gradle.kts",
+            "settings.gradle"
         ],
         matchAny: true,
         language: "java"

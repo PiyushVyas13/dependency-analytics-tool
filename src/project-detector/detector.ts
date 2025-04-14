@@ -14,6 +14,10 @@ export class ProjectDetector {
      * @returns A promise that resolves to the detected project type, or null if none could be detected
      */
     public async detectProjectType(rootFolder: string): Promise<ProjectType | null> {
+        // Add performance measurement for project detection
+        console.log(`[Performance] Starting project type detection for ${rootFolder}`);
+        const startTime = performance.now();
+        
         for (const [projectTypeId, config] of Object.entries(PROJECT_CONFIGS)) {
             const { requiredFiles, matchAny, language } = config;
             
@@ -47,9 +51,19 @@ export class ProjectDetector {
                     };
                 }
                 
+                // Log successful detection time
+                const endTime = performance.now();
+                const elapsedTime = endTime - startTime;
+                console.log(`[Performance] Detected project type ${projectTypeId} in ${elapsedTime.toFixed(2)}ms`);
+                
                 return projectType;
             }
         }
+        
+        // Log failed detection time
+        const endTime = performance.now();
+        const elapsedTime = endTime - startTime;
+        console.log(`[Performance] Failed to detect project type after ${elapsedTime.toFixed(2)}ms`);
         
         // No project type detected
         return null;

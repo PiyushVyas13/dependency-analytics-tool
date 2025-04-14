@@ -69,6 +69,7 @@ export const Graph: React.FC<GraphProps> = ({
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 5000, height: 5000 });
+  const [expandingNode, setExpandingNode] = useState<string | null>(null);
 
   // Handle window resize
   useEffect(() => {
@@ -396,6 +397,442 @@ export const Graph: React.FC<GraphProps> = ({
         panel: 'bg-white/90 border-gray-100',
       };
 
+  // Implement handler functions for the new features
+
+  // Focus the view on a specific node
+  const handleFocusNode = useCallback((node: GraphNode) => {
+    // Find the node position
+    const nodePos = nodePositions[node.id];
+    if (!nodePos) return;
+
+    // Calculate the center transform to focus on this node
+    // Instead of applying a scale factor to current scale, set a fixed zoom level
+    const focusScale = 1.5;
+    
+    // Calculate the transform needed to center the node
+    const centerX = containerSize.width / 2;
+    const centerY = containerSize.height / 2;
+    
+    // Calculate the necessary transform to position the node at the center
+    const newX = centerX - (nodePos.x * focusScale);
+    const newY = centerY - (nodePos.y * focusScale);
+    
+    // Apply the new transform
+    setTransform({
+      x: newX,
+      y: newY,
+      scale: focusScale
+    });
+    
+    // Also select the node
+    setSelectedNode(node);
+  }, [nodePositions, containerSize]);
+
+  // Open the source file of a node
+  const handleOpenSourceFile = useCallback((node: GraphNode) => {
+    const filePath = getNodeDisplayPath(node);
+    if (!filePath) return;
+    
+    // Try multiple approaches to ensure maximum compatibility
+    
+    // 1. Dispatch a custom event that the parent application can listen for
+    window.dispatchEvent(new CustomEvent('openSourceFile', { 
+      detail: { filePath, node }
+    }));
+    
+    // 2. Try to use parent window postMessage for iframe scenarios
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'openSourceFile',
+          data: { filePath, node }
+        }, '*');
+      }
+    } catch (e) {
+      console.error('Failed to post message to parent:', e);
+    }
+    
+    // 3. Try to use localStorage event for cross-window communication
+    try {
+      localStorage.setItem('digramaatic_openSourceFile', JSON.stringify({
+        filePath,
+        nodeId: node.id,
+        timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.error('Failed to use localStorage:', e);
+    }
+    
+    console.log('Request to open source file:', filePath);
+  }, [getNodeDisplayPath]);
+
+  // Reveal the file in the file tree
+  const handleRevealInFileTree = useCallback((node: GraphNode) => {
+    const filePath = getNodeDisplayPath(node);
+    if (!filePath) return;
+    
+    // Try multiple approaches to ensure maximum compatibility
+    
+    // 1. Dispatch a custom event that the parent application can listen for
+    window.dispatchEvent(new CustomEvent('revealInFileTree', { 
+      detail: { filePath, node }
+    }));
+    
+    // 2. Try to use parent window postMessage for iframe scenarios
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'revealInFileTree',
+          data: { filePath, node }
+        }, '*');
+      }
+    } catch (e) {
+      console.error('Failed to post message to parent:', e);
+    }
+    
+    // 3. Try to use localStorage event for cross-window communication
+    try {
+      localStorage.setItem('digramaatic_revealInFileTree', JSON.stringify({
+        filePath,
+        nodeId: node.id,
+        timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.error('Failed to use localStorage:', e);
+    }
+    
+    console.log('Request to reveal in file tree:', filePath);
+  }, [getNodeDisplayPath]);
+
+  // Expand the graph to show more direct children of a node
+  const handleExpandNode = useCallback((node: GraphNode) => {
+    // Show loading animation on the expanding node
+    setExpandingNode(node.id);
+    
+    // Try multiple approaches to ensure maximum compatibility
+    
+    // 1. Dispatch a custom event that the parent application can listen for
+    window.dispatchEvent(new CustomEvent('expandNode', { 
+      detail: { nodeId: node.id, node }
+    }));
+    
+    // 2. Try to use parent window postMessage for iframe scenarios
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'expandNode',
+          data: { nodeId: node.id, node }
+        }, '*');
+      }
+    } catch (e) {
+      console.error('Failed to post message to parent:', e);
+    }
+    
+    // 3. Try to use localStorage event for cross-window communication
+    try {
+      localStorage.setItem('digramaatic_expandNode', JSON.stringify({
+        nodeId: node.id,
+        timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.error('Failed to use localStorage:', e);
+    }
+    
+    console.log('Request to expand node:', node.id);
+    
+    // Keep track of newly added nodes that don't already exist in the current view
+    const newNodeIds = new Set<string>();
+    const newEdgeKeys = new Set<string>();
+    const childEdges = new Set<string>();
+    
+    // Find all direct children (nodes that this node has edges to)
+    processedData.edges.forEach((edge) => {
+      if (edge.source === node.id) {
+        // Add the target node and edge to our tracking sets
+        childEdges.add(`${edge.source}-${edge.target}`);
+        
+        // Only add to newNodeIds if the node doesn't already have a position
+        // This ensures we only expand to show NEW nodes
+        if (!nodePositions[edge.target] || 
+            (nodePositions[edge.target].x === 0 && nodePositions[edge.target].y === 0)) {
+          newNodeIds.add(edge.target);
+          newEdgeKeys.add(`${edge.source}-${edge.target}`);
+        }
+      }
+    });
+    
+    // Check node metadata for any additional dependencies that might not be in edges
+    if (node.metadata) {
+      // Check for outgoing dependencies
+      if (node.metadata.outgoingDependencies && Array.isArray(node.metadata.outgoingDependencies)) {
+        node.metadata.outgoingDependencies.forEach((dep: string) => {
+          // Find matching node for this dependency
+          const dependentNode = processedData.nodes.find(n => 
+            n.id === dep || 
+            n.name === dep || 
+            n.title === dep || 
+            n.metadata?.fullName === dep);
+          
+          if (dependentNode) {
+            childEdges.add(`${node.id}-${dependentNode.id}`);
+            
+            // Only add to newNodeIds if the node doesn't already have a position
+            if (!nodePositions[dependentNode.id] || 
+                (nodePositions[dependentNode.id].x === 0 && nodePositions[dependentNode.id].y === 0)) {
+              newNodeIds.add(dependentNode.id);
+              newEdgeKeys.add(`${node.id}-${dependentNode.id}`);
+            }
+          }
+        });
+      }
+      
+      // Check for imports (common in TypeScript/JavaScript components)
+      if (node.metadata.imports && Array.isArray(node.metadata.imports)) {
+        node.metadata.imports.forEach((imp: any) => {
+          const importName = typeof imp === 'string' ? imp : imp.name || imp.path;
+          if (!importName) return;
+          
+          // Find matching node for this import
+          const importedNode = processedData.nodes.find(n => 
+            n.id === importName || 
+            n.name === importName || 
+            n.title === importName || 
+            (n.metadata?.filePath && importName.includes(n.metadata.filePath)));
+          
+          if (importedNode) {
+            childEdges.add(`${node.id}-${importedNode.id}`);
+            
+            // Only add to newNodeIds if the node doesn't already have a position
+            if (!nodePositions[importedNode.id] || 
+                (nodePositions[importedNode.id].x === 0 && nodePositions[importedNode.id].y === 0)) {
+              newNodeIds.add(importedNode.id);
+              newEdgeKeys.add(`${node.id}-${importedNode.id}`);
+            }
+          }
+        });
+      }
+    }
+    
+    if (newNodeIds.size > 0) {
+      // Get the node's current position as anchor
+      const nodePos = nodePositions[node.id] || { x: 0, y: 0 };
+      
+      // Only proceed if we have a valid position for the source node
+      if (nodePos.x !== 0 || nodePos.y !== 0) {
+        // Create positions for the new nodes in a circle around the source node
+        const newPositions = { ...nodePositions };
+        
+        // Radius for placing new nodes
+        const radius = 200;
+        
+        // Calculate positions for the newly revealed nodes in a circular arrangement
+        const nodesToPlaceArray = Array.from(newNodeIds);
+        const angleStep = (2 * Math.PI) / Math.max(nodesToPlaceArray.length, 1);
+        
+        // Start angle - for just one node, place it to the right
+        // For multiple nodes, distribute evenly around the source
+        let startAngle = 0;
+        if (nodesToPlaceArray.length === 1) {
+          startAngle = 0; // Place to the right
+        } else if (nodesToPlaceArray.length === 2) {
+          startAngle = -Math.PI / 2; // Start from bottom
+        } else {
+          startAngle = -Math.PI / 2; // Start from bottom for 3+ nodes
+        }
+        
+        nodesToPlaceArray.forEach((id, index) => {
+          const angle = startAngle + index * angleStep;
+          newPositions[id] = {
+            x: nodePos.x + radius * Math.cos(angle),
+            y: nodePos.y + radius * Math.sin(angle)
+          };
+        });
+        
+        // Update the node positions
+        setNodePositions(newPositions);
+        
+        // Log feedback
+        console.log(`Added ${newNodeIds.size} new dependencies for node: ${node.name || node.title || node.id}`);
+      }
+    }
+    
+    // Update highlighted path to include this node and its immediate outgoing connections
+    // This makes the newly added connections more visible without changing the full graph view
+    setHighlightedPath({
+      nodes: new Set([node.id, ...childEdges.values()].filter(id => typeof id === 'string')),
+      edges: childEdges,
+    });
+    
+    // Select the node
+    setSelectedNode(node);
+    
+    // Hide loading animation after everything is done
+    setTimeout(() => setExpandingNode(null), 500);
+  }, [processedData.edges, processedData.nodes, nodePositions]);
+
+  // Go to the parent(s) of a node
+  const handleGoToParent = useCallback((node: GraphNode) => {
+    // Find all direct parents (nodes that have edges to this node)
+    const parents = new Set<string>();
+    const parentEdges = new Set<string>();
+
+    processedData.edges.forEach((edge) => {
+      if (edge.target === node.id) {
+        parents.add(edge.source);
+        parentEdges.add(`${edge.source}-${edge.target}`);
+      }
+    });
+
+    // Update highlighted path to include this node and all direct parents
+    setHighlightedPath({
+      nodes: new Set([node.id, ...parents]),
+      edges: parentEdges,
+    });
+    
+    // If there's only one parent, select it
+    if (parents.size === 1) {
+      const parentId = Array.from(parents)[0];
+      const parentNode = processedData.nodes.find(n => n.id === parentId);
+      if (parentNode) {
+        setSelectedNode(parentNode);
+      }
+    }
+  }, [processedData.edges, processedData.nodes]);
+
+  // Copy the import path of a node to clipboard
+  const handleCopyImportPath = useCallback((node: GraphNode) => {
+    const filePath = getNodeDisplayPath(node);
+    if (!filePath) {
+      console.log('No file path available for this node');
+      return;
+    }
+    
+    // Format the import path
+    let importPath = filePath;
+    
+    // Remove file extension if exists
+    importPath = importPath.replace(/\.(tsx|ts|jsx|js|java|py)$/, '');
+    
+    // Handle directory separator normalization
+    importPath = importPath.replace(/\\/g, '/');
+    
+    // Remove leading slash if exists
+    if (importPath.startsWith('/')) {
+      importPath = importPath.substring(1);
+    }
+    
+    // Format based on likely project structure
+    if (importPath.includes('/src/')) {
+      // For projects that use src directory structure:
+      // - handle 'src/components/Button.tsx' -> '@/components/Button'
+      importPath = '@/' + importPath.split('/src/')[1]; 
+    } else if (importPath.includes('/app/') || importPath.includes('/pages/')) {
+      // For Next.js projects:
+      // - handle 'app/page.tsx' -> '@/app/page'
+      // - handle 'pages/index.tsx' -> '@/pages/index'
+      const segments = importPath.split('/');
+      const appOrPagesIndex = segments.findIndex((s: string) => s === 'app' || s === 'pages');
+      if (appOrPagesIndex >= 0) {
+        importPath = '@/' + segments.slice(appOrPagesIndex).join('/');
+      }
+    } else if (importPath.includes('/packages/') || importPath.includes('/libs/')) {
+      // For monorepo structures:
+      // - handle 'packages/ui/Button.tsx' -> '@org/ui/Button'
+      const segments = importPath.split('/');
+      const packageIndex = segments.findIndex((s: string) => s === 'packages' || s === 'libs');
+      if (packageIndex >= 0 && segments.length > packageIndex + 1) {
+        importPath = '@org/' + segments.slice(packageIndex + 1).join('/');
+      }
+    }
+    
+    // Copy to clipboard
+    try {
+      navigator.clipboard.writeText(importPath)
+        .then(() => {
+          // Show visual feedback
+          console.log('Import path copied to clipboard:', importPath);
+          
+          // Create a temporary visual feedback element
+          const feedbackEl = document.createElement('div');
+          feedbackEl.textContent = `Copied: ${importPath}`;
+          feedbackEl.style.position = 'fixed';
+          feedbackEl.style.bottom = '20px';
+          feedbackEl.style.left = '50%';
+          feedbackEl.style.transform = 'translateX(-50%)';
+          feedbackEl.style.padding = '10px 20px';
+          feedbackEl.style.background = theme === 'dark' ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
+          feedbackEl.style.color = theme === 'dark' ? '#fff' : '#000';
+          feedbackEl.style.borderRadius = '4px';
+          feedbackEl.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+          feedbackEl.style.zIndex = '9999';
+          feedbackEl.style.transition = 'opacity 0.3s ease-in-out';
+          
+          document.body.appendChild(feedbackEl);
+          
+          // Fade out and remove after 2 seconds
+          setTimeout(() => {
+            feedbackEl.style.opacity = '0';
+            setTimeout(() => {
+              if (document.body.contains(feedbackEl)) {
+                document.body.removeChild(feedbackEl);
+              }
+            }, 300);
+          }, 2000);
+        })
+        .catch(err => {
+          console.error('Error copying to clipboard:', err);
+        });
+    } catch (err) {
+      console.error('Clipboard API not supported:', err);
+      
+      // Fallback for browsers without clipboard API
+      const textArea = document.createElement('textarea');
+      textArea.value = importPath;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          console.log('Import path copied to clipboard (fallback):', importPath);
+        } else {
+          console.error('Failed to copy import path using execCommand');
+        }
+      } catch (err) {
+        console.error('Error using execCommand to copy:', err);
+      }
+      
+      document.body.removeChild(textArea);
+    }
+  }, [getNodeDisplayPath, theme]);
+
+  // Add effect to reset highlighted paths when graph data changes
+  useEffect(() => {
+    // Reset highlightedPath and selectedNode when processedData changes
+    // This prevents dangling arrows when switching between full and focused views
+    setHighlightedPath({ nodes: new Set(), edges: new Set() });
+    setSelectedNode(null);
+    
+    // Reset positions for nodes that no longer exist in the data
+    setNodePositions(prevPositions => {
+      const currentNodeIds = new Set(processedData.nodes.map(node => node.id));
+      const newPositions: Record<string, { x: number; y: number }> = {};
+      
+      // Only keep positions for nodes that still exist in the data
+      Object.entries(prevPositions).forEach(([id, pos]) => {
+        if (currentNodeIds.has(id)) {
+          newPositions[id] = pos;
+        }
+      });
+      
+      return newPositions;
+    });
+  }, [processedData.nodes]);
+
   return (
     <div 
       ref={containerRef}
@@ -494,6 +931,13 @@ export const Graph: React.FC<GraphProps> = ({
                   totalNodesInView={processedData.nodes.length}
                   isInteractive={true}
                   zoomScale={transform.scale}
+                  onFocusNode={handleFocusNode}
+                  onOpenSourceFile={handleOpenSourceFile}
+                  onRevealInFileTree={handleRevealInFileTree}
+                  onExpandNode={handleExpandNode}
+                  onGoToParent={handleGoToParent}
+                  onCopyImportPath={handleCopyImportPath}
+                  expandingNode={expandingNode}
                 />
               </foreignObject>
             );

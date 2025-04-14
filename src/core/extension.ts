@@ -74,7 +74,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully loaded standardized dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully loaded standardized dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -102,7 +107,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully converted and loaded dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully converted and loaded dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -130,7 +140,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully converted and loaded legacy dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully converted and loaded legacy dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -143,8 +158,15 @@ export function activate(context: vscode.ExtensionContext) {
     
     // Start the analysis process
     async function startAnalysis(): Promise<void> {
+        // Add overall performance timing
+        console.log(`[Performance] Starting dependency analytics process`);
+        const overallStartTime = performance.now();
+        
         // Check if dependencies already exist
         if (await loadExistingDependencies()) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Loaded existing dependencies in ${overallElapsedTime.toFixed(2)}ms`);
             vscode.window.showInformationMessage('Loaded existing dependency analysis.');
             return;
         }
@@ -152,6 +174,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Select the root folder
         const rootFolder = await projectDetector.selectRootFolder();
         if (!rootFolder) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis cancelled after ${overallElapsedTime.toFixed(2)}ms - no folder selected`);
             vscode.window.showErrorMessage('No folder selected for analysis.');
             return;
         }
@@ -159,6 +184,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Detect the project type
         const projectType = await projectDetector.detectProjectType(rootFolder);
         if (!projectType) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis failed after ${overallElapsedTime.toFixed(2)}ms - could not detect project type`);
             vscode.window.showErrorMessage('Could not detect project type. Please make sure your project structure is supported.');
             return;
         }
@@ -190,8 +218,22 @@ export function activate(context: vscode.ExtensionContext) {
             // Update the tree views
             dependencyTreeProvider.setGraph(currentDependencyGraph);
             
-            vscode.window.showInformationMessage('Dependency analysis completed successfully.');
+            // Calculate graph metrics
+            const nodeCount = currentDependencyGraph.nodes.length;
+            const maxDepth = calculateMaxDepth(currentDependencyGraph);
+            
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis completed successfully in ${overallElapsedTime.toFixed(2)}ms`);
+            console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+            
+            // Display performance information in the VS Code UI
+            vscode.window.showInformationMessage(`Dependency analysis completed in ${(overallElapsedTime / 1000).toFixed(2)} seconds. Found ${nodeCount} nodes with max depth of ${maxDepth}.`);
         } catch (error) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis failed after ${overallElapsedTime.toFixed(2)}ms with error: ${error}`);
+            
             outputChannel.appendLine(`Error analyzing dependencies: ${error}`);
             vscode.window.showErrorMessage(`Error analyzing dependencies: ${error}`);
         }
@@ -282,34 +324,193 @@ export function activate(context: vscode.ExtensionContext) {
             }
         }),
         
-        // Navigate to source command
-        vscode.commands.registerCommand('dependencyAnalytics.navigateToSource', async (node: any) => {
-            if (!node || !node.metadata?.sourceFile) {
-                vscode.window.showErrorMessage('Source file information not available');
-                return;
-            }
-            
+        // Open source file command
+        vscode.commands.registerCommand('dependencyAnalytics.openSourceFile', (data: any) => {
             try {
-                const sourceFile = node.node.metadata.sourceFile;
-                
-                // Find the source file
-                const files = await vscode.workspace.findFiles(`**/${sourceFile}`);
-                if (files.length === 0) {
-                    vscode.window.showErrorMessage(`File not found: ${sourceFile}`);
+                const filePath = data.filePath || data.metadata?.sourceFile || data.metadata?.filePath;
+                if (!filePath) {
+                    vscode.window.showErrorMessage('No file path provided to open');
                     return;
                 }
                 
-                // Open the document
-                const document = await vscode.workspace.openTextDocument(files[0]);
-                await vscode.window.showTextDocument(document);
+                // Get workspace root
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    vscode.window.showErrorMessage('No workspace folder found');
+                    return;
+                }
+                const workspaceRoot = workspaceFolders[0].uri.fsPath;
+                
+                // Normalize path
+                let normalizedPath = filePath.replace(/\\/g, '/');
+                
+                // Check if the path is absolute or relative
+                let absolutePath: string;
+                if (path.isAbsolute(normalizedPath)) {
+                    absolutePath = normalizedPath;
+                } else {
+                    // Handle paths that start with / by removing the leading slash
+                    if (normalizedPath.startsWith('/')) {
+                        normalizedPath = normalizedPath.substring(1);
+                    }
+                    
+                    // Check if it's a special path format (like /app/layout.tsx often used in Next.js)
+                    if (normalizedPath.startsWith('app/') || normalizedPath.startsWith('pages/')) {
+                        // Try to find the file in the src directory first
+                        const srcPath = path.join(workspaceRoot, 'src', normalizedPath);
+                        if (fs.existsSync(srcPath)) {
+                            absolutePath = srcPath;
+                        } else {
+                            // Then try at the root of the project
+                            absolutePath = path.join(workspaceRoot, normalizedPath);
+                        }
+                    } else {
+                        // Handle paths relative to project root or src
+                        const rootPath = path.join(workspaceRoot, normalizedPath);
+                        const srcPath = path.join(workspaceRoot, 'src', normalizedPath);
+                        
+                        // Check if file exists at either location
+                        if (fs.existsSync(rootPath)) {
+                            absolutePath = rootPath;
+                        } else if (fs.existsSync(srcPath)) {
+                            absolutePath = srcPath;
+                        } else {
+                            // Try to find the file using workspace.findFiles
+                            vscode.workspace.findFiles(`**/${normalizedPath}`, '**/node_modules/**')
+                                .then(files => {
+                                    if (files.length > 0) {
+                                        openDocument(files[0].fsPath);
+                                    } else {
+                                        vscode.window.showErrorMessage(`File not found: ${normalizedPath}`);
+                                    }
+                                });
+                            return;
+                        }
+                    }
+                }
+                
+                // Use the resolved absolute path
+                openDocument(absolutePath);
+                
+                function openDocument(docPath: string) {
+                    const fileUri = vscode.Uri.file(docPath);
+                    outputChannel.appendLine(`Opening file: ${docPath}`);
+                    
+                    // Open the document
+                    vscode.window.showTextDocument(fileUri, {
+                        viewColumn: vscode.ViewColumn.One,
+                        preserveFocus: false,
+                        preview: false
+                    }).then(editor => {
+                        // Focus the editor
+                        if (editor) {
+                            const position = new vscode.Position(0, 0);
+                            editor.selection = new vscode.Selection(position, position);
+                            editor.revealRange(new vscode.Range(position, position));
+                        }
+                    }, (err: Error) => {
+                        // Handle error as a rejection in the promise rather than using catch
+                        outputChannel.appendLine(`Error opening file: ${err.message}`);
+                        vscode.window.showErrorMessage(`Failed to open file: ${docPath}. ${err.message}`);
+                    });
+                }
             } catch (error) {
-                outputChannel.appendLine(`Error navigating to source: ${error}`);
-                vscode.window.showErrorMessage(`Error navigating to source: ${error}`);
+                outputChannel.appendLine(`Error opening source file: ${error}`);
+                vscode.window.showErrorMessage(`Failed to open source file: ${error}`);
             }
         }),
         
-        // Refresh analysis command
-        vscode.commands.registerCommand('dependencyAnalytics.refreshAnalysis', startAnalysis)
+        // Reveal in file explorer command
+        vscode.commands.registerCommand('dependencyAnalytics.revealInFileTree', (data: any) => {
+            try {
+                const filePath = data.filePath || data.metadata?.sourceFile || data.metadata?.filePath;
+                if (!filePath) {
+                    vscode.window.showErrorMessage('No file path provided to reveal');
+                    return;
+                }
+                
+                // Get workspace root
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    vscode.window.showErrorMessage('No workspace folder found');
+                    return;
+                }
+                const workspaceRoot = workspaceFolders[0].uri.fsPath;
+                
+                // Normalize path
+                let normalizedPath = filePath.replace(/\\/g, '/');
+                
+                // Check if the path is absolute or relative
+                let absolutePath: string;
+                if (path.isAbsolute(normalizedPath)) {
+                    absolutePath = normalizedPath;
+                } else {
+                    // Handle paths that start with / by removing the leading slash
+                    if (normalizedPath.startsWith('/')) {
+                        normalizedPath = normalizedPath.substring(1);
+                    }
+                    
+                    // Check if it's a special path format (like /app/layout.tsx often used in Next.js)
+                    if (normalizedPath.startsWith('app/') || normalizedPath.startsWith('pages/')) {
+                        // Try to find the file in the src directory first
+                        const srcPath = path.join(workspaceRoot, 'src', normalizedPath);
+                        if (fs.existsSync(srcPath)) {
+                            absolutePath = srcPath;
+                        } else {
+                            // Then try at the root of the project
+                            absolutePath = path.join(workspaceRoot, normalizedPath);
+                        }
+                    } else {
+                        // Handle paths relative to project root or src
+                        const rootPath = path.join(workspaceRoot, normalizedPath);
+                        const srcPath = path.join(workspaceRoot, 'src', normalizedPath);
+                        
+                        // Check if file exists at either location
+                        if (fs.existsSync(rootPath)) {
+                            absolutePath = rootPath;
+                        } else if (fs.existsSync(srcPath)) {
+                            absolutePath = srcPath;
+                        } else {
+                            // Try to find the file using workspace.findFiles
+                            vscode.workspace.findFiles(`**/${normalizedPath}`, '**/node_modules/**')
+                                .then(files => {
+                                    if (files.length > 0) {
+                                        revealDocument(files[0].fsPath);
+                                    } else {
+                                        vscode.window.showErrorMessage(`File not found: ${normalizedPath}`);
+                                    }
+                                });
+                            return;
+                        }
+                    }
+                }
+                
+                // Use the resolved absolute path
+                revealDocument(absolutePath);
+                
+                function revealDocument(docPath: string) {
+                    const fileUri = vscode.Uri.file(docPath);
+                    outputChannel.appendLine(`Revealing file: ${docPath}`);
+                    
+                    // Execute the reveal in explorer command
+                    vscode.commands.executeCommand('revealInExplorer', fileUri)
+                        .then(() => {
+                            outputChannel.appendLine(`Successfully revealed file: ${docPath}`);
+                        }, (err: Error) => {
+                            outputChannel.appendLine(`Error revealing file: ${err.message}`);
+                            vscode.window.showErrorMessage(`Failed to reveal file: ${docPath}. ${err.message}`);
+                        });
+                }
+            } catch (error) {
+                outputChannel.appendLine(`Error revealing file in explorer: ${error}`);
+                vscode.window.showErrorMessage(`Failed to reveal file in explorer: ${error}`);
+            }
+        }),
+        
+        // Navigate to source command (alias for openSourceFile for backward compatibility)
+        vscode.commands.registerCommand('dependencyAnalytics.navigateToSource', (data: any) => {
+            vscode.commands.executeCommand('dependencyAnalytics.openSourceFile', data);
+        })
     );
     
     // Set up file watcher to refresh analysis when files change
@@ -339,4 +540,57 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     // Cleanup
+}
+
+// Calculate the maximum depth of the dependency graph
+function calculateMaxDepth(graph: Graph): number {
+    if (!graph || !graph.edges || graph.edges.length === 0 || !graph.nodes || graph.nodes.length === 0) {
+        return 0;
+    }
+    
+    // Create adjacency list from edges
+    const adjacencyList = new Map<string, string[]>();
+    
+    // Initialize map with all nodes
+    graph.nodes.forEach(node => {
+        adjacencyList.set(node.id, []);
+    });
+    
+    // Add edges to adjacency list
+    graph.edges.forEach(edge => {
+        const sourceDependencies = adjacencyList.get(edge.source) || [];
+        sourceDependencies.push(edge.target);
+        adjacencyList.set(edge.source, sourceDependencies);
+    });
+    
+    // Track visited nodes and their depths
+    const visited = new Map<string, number>();
+    let maxDepth = 0;
+    
+    // Perform DFS from each node to find the longest path
+    const dfs = (nodeId: string, depth: number): void => {
+        // If already visited with a higher or equal depth, skip
+        if (visited.has(nodeId) && visited.get(nodeId)! >= depth) {
+            return;
+        }
+        
+        // Update max depth
+        maxDepth = Math.max(maxDepth, depth);
+        
+        // Mark as visited with current depth
+        visited.set(nodeId, depth);
+        
+        // Visit all dependencies
+        const dependencies = adjacencyList.get(nodeId) || [];
+        for (const dependencyId of dependencies) {
+            dfs(dependencyId, depth + 1);
+        }
+    };
+    
+    // Start DFS from each node
+    graph.nodes.forEach(node => {
+        dfs(node.id, 0);
+    });
+    
+    return maxDepth;
 }

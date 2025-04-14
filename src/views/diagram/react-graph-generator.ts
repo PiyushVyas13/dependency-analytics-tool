@@ -188,20 +188,31 @@ export class ReactGraphGenerator extends DiagramGenerator {
         // Handle messages from webview
         panel.webview.onDidReceiveMessage(
             async (message) => {
+                console.log('Received message from webview:', message.command, message);
                 switch (message.command) {
                     case 'selectNode':
                         // Handle node selection (e.g., update structure view)
                         const selectedNode = allNodes.find(n => n.id === message.nodeId);
                         if (selectedNode) {
-                            vscode.commands.executeCommand('dependencyAnalytics.showNodeDetails', selectedNode);
+                            vscode.commands.executeCommand('dependencyAnalytics.showNodeDetails', { node: selectedNode });
                         }
                         break;
                     case 'navigateToSource':
                         // Handle navigation to source
                         if (message.filePath) {
-                            vscode.commands.executeCommand('dependencyAnalytics.navigateToSource', {
-                                metadata: { sourceFile: message.filePath }
-                            });
+                            this.navigateToSourceFile(message.filePath);
+                        }
+                        break;
+                    case 'openSourceFile':
+                        // Handle open in source file request
+                        if (message.filePath) {
+                            this.navigateToSourceFile(message.filePath);
+                        }
+                        break;
+                    case 'revealInFileTree':
+                        // Handle reveal in file tree request
+                        if (message.filePath) {
+                            this.revealInFileExplorer(message.filePath);
                         }
                         break;
                     case 'toggleFullGraph':
@@ -217,6 +228,30 @@ export class ReactGraphGenerator extends DiagramGenerator {
                                 data: newGraphData,
                                 showFullGraph: message.showFullGraph
                             });
+                        }
+                        break;
+                    case 'expandNode':
+                        // Handle node expansion request
+                        console.log('Received expandNode command for nodeId:', message.nodeId);
+                        const nodeToExpand = allNodes.find(n => n.id === message.nodeId);
+                        if (nodeToExpand) {
+                            console.log('Found node to expand:', nodeToExpand.title || nodeToExpand.id);
+                            // Find all connections for this node
+                            const fullGraphData = graph || this.findGraphData(allNodes);
+                            if (fullGraphData) {
+                                const expandedGraph = this.expandNodeConnections(targetNode, nodeToExpand, allNodes, fullGraphData);
+                                console.log('Graph expanded, sending update to webview');
+                                
+                                // Update the graph data
+                                panel.webview.postMessage({ 
+                                    command: 'updateGraphData', 
+                                    data: expandedGraph
+                                });
+                            } else {
+                                console.log('No graph data found for expansion');
+                            }
+                        } else {
+                            console.log('Could not find node with ID:', message.nodeId);
                         }
                         break;
                 }
@@ -700,5 +735,140 @@ export class ReactGraphGenerator extends DiagramGenerator {
         
         console.log('Could not find any graph data');
         return undefined;
+    }
+
+    /**
+     * Navigate to a source file in the editor
+     * @param filePath Path to the source file
+     */
+    private navigateToSourceFile(filePath: string): void {
+        vscode.commands.executeCommand('dependencyAnalytics.openSourceFile', { filePath });
+    }
+
+    /**
+     * Reveal a file in the explorer view
+     * @param filePath Path to the file to reveal
+     */
+    private revealInFileExplorer(filePath: string): void {
+        vscode.commands.executeCommand('dependencyAnalytics.revealInFileTree', { filePath });
+    }
+
+    /**
+     * Expand node connections
+     * @param node The node to expand connections for
+     * @param allNodes All nodes in the project
+     * @param graph The full graph data including edges
+     * @returns Expanded graph data
+     */
+    private expandNodeConnections(focusedNode: Node, node: Node, allNodes: Node[], graph: Graph): any {
+              
+        // Get the current view data using the original focused node, not the expanded node
+        const currentData = this.prepareGraphData(focusedNode, allNodes, graph);
+        
+        // Create sets for tracking included nodes and edges
+        const nodeIds = new Set<string>();
+        const edgeIds = new Set<string>();
+        
+        // Add existing nodes and edges from current data
+        currentData.nodes.forEach((n: any) => nodeIds.add(n.id));
+        currentData.edges.forEach((e: any) => edgeIds.add(`${e.source}-${e.target}`));
+        
+        // Track new nodes and edges being added by this expansion
+        const newNodeIds = new Set<string>();
+        const newEdgeIds = new Set<string>();
+        
+        console.log(`Expanding node ${node.id} - currently have ${nodeIds.size} nodes and ${edgeIds.size} edges`);
+        
+        // Find all outgoing dependency relationships from the full graph
+        if (graph && Array.isArray(graph.edges)) {
+            graph.edges.forEach((edge: any) => {
+                // Find outgoing edges from the node we want to expand
+                if (edge.source === node.id && !edgeIds.has(`${edge.source}-${edge.target}`)) {
+                    // Add the target node to our sets
+                    nodeIds.add(edge.target);
+                    newNodeIds.add(edge.target);
+                    
+                    // Add the edge to our tracking sets
+                    edgeIds.add(`${edge.source}-${edge.target}`);
+                    newEdgeIds.add(`${edge.source}-${edge.target}`);
+                }
+            });
+        }
+        
+        // Find additional relationships from node metadata
+        if (node.metadata?.outgoingDependencies && Array.isArray(node.metadata.outgoingDependencies)) {
+            node.metadata.outgoingDependencies.forEach((dep: string) => {
+                const targetNodeData = allNodes.find(n => 
+                    n.metadata?.fullName === dep || n.title === dep || n.id === dep);
+                
+                if (targetNodeData && !edgeIds.has(`${node.id}-${targetNodeData.id}`)) {
+                    nodeIds.add(targetNodeData.id);
+                    newNodeIds.add(targetNodeData.id);
+                    
+                    edgeIds.add(`${node.id}-${targetNodeData.id}`);
+                    newEdgeIds.add(`${node.id}-${targetNodeData.id}`);
+                }
+            });
+        }
+        
+        // Create a list of all nodes (existing + new) from our set
+        const expandedNodes = Array.from(nodeIds)
+            .map(id => allNodes.find(n => n.id === id))
+            .filter((n): n is Node => n !== undefined)
+            .map(n => this.transformNodeForReact(n));
+        
+        // Create a list of all edges (existing + new) from our tracking set
+        const expandedEdges = Array.from(edgeIds).map(edgeKey => {
+            const [source, target] = edgeKey.split('-');
+            
+            // First try to find the edge in the graph data
+            const existingEdge = graph && Array.isArray(graph.edges) 
+                ? graph.edges.find((e: any) => e.source === source && e.target === target)
+                : null;
+                
+            if (existingEdge) {
+                return existingEdge;
+            }
+            
+            // If not found, create a basic edge
+            return {
+                source,
+                target,
+                type: 'dependency',
+                metadata: { relationship: 'related' }
+            };
+        });
+        
+        // Get information about newly added nodes
+        const newNodesCount = newNodeIds.size;
+        const newEdgesCount = newEdgeIds.size;
+        
+        console.log(`Expansion added ${newNodesCount} new nodes and ${newEdgesCount} new edges`);
+        
+        // Highlight the newly added nodes and edges
+        const highlightedEdges = Array.from(newEdgeIds);
+        const highlightedNodes = [node.id, ...Array.from(newNodeIds)];
+        
+        
+        
+        // Return the expanded graph data with the same layout and visualization settings
+        return {
+            nodes: expandedNodes,
+            edges: expandedEdges,
+            projectName: currentData.projectName,
+            language: currentData.language,
+            layout: currentData.layout,
+            visualization: currentData.visualization,
+            layoutSettings: currentData.layoutSettings || {},
+            metadata: {
+                ...currentData.metadata,
+                expandedNode: node.id,
+                highlightedNodes: highlightedNodes,
+                highlightedEdges: highlightedEdges,
+                newNodes: Array.from(newNodeIds),
+                newEdges: Array.from(newEdgeIds),
+                justExpanded: true
+            }
+        };
     }
 }

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Edge, Node } from '../../types/graph';
 import { calculateNodeIntersection } from '../../utils/graph/edgeUtils';
 
@@ -26,13 +26,31 @@ export const GraphEdges: React.FC<GraphEdgesProps> = ({
   transform,
   onEdgeClick
 }) => {
+  // Filter valid edges - this is the key improvement to prevent dangling arrows
+  const validEdges = useMemo(() => {
+    return edges.filter(edge => {
+      const sourcePos = nodePositions[edge.source];
+      const targetPos = nodePositions[edge.target];
+      
+      // Only include edges where both source and target nodes have valid positions
+      return sourcePos && targetPos && 
+             sourcePos.x !== 0 && sourcePos.y !== 0 &&
+             targetPos.x !== 0 && targetPos.y !== 0;
+    });
+  }, [edges, nodePositions]);
+
+  // Return early if no valid edges
+  if (validEdges.length === 0) {
+    return null;
+  }
+
   return (
     <>
-      {edges.map((edge) => {
-        const sourcePos = nodePositions[edge.source] || { x: 0, y: 0 };
-        const targetPos = nodePositions[edge.target] || { x: 0, y: 0 };
+      {validEdges.map((edge) => {
+        const sourcePos = nodePositions[edge.source];
+        const targetPos = nodePositions[edge.target];
 
-
+        // This should never happen due to our filtering, but added as a safeguard
         if (!sourcePos || !targetPos || 
           (sourcePos.x === 0 && sourcePos.y === 0) || 
           (targetPos.x === 0 && targetPos.y === 0)) {
@@ -45,7 +63,6 @@ export const GraphEdges: React.FC<GraphEdgesProps> = ({
 
         const angle = Math.atan2(targetPos.y - sourcePos.y, targetPos.x - sourcePos.x);
 
-        // REPLACE THIS SECTION
         // Calculate node dimensions - match these with your actual node size
         const nodeWidth = 180 * nodeSizeScale; // Width of your node
         const nodeHeight = 90 * nodeSizeScale;  // Height of your node (adjust based on actual dimensions)
@@ -83,8 +100,14 @@ export const GraphEdges: React.FC<GraphEdgesProps> = ({
           strokeWidth = 2;
         }
 
+        // Add an edge ID for better debugging and identification
+        const edgeId = `edge-${edge.source}-${edge.target}`;
+
         return (
-          <g key={`edge-${edge.source}-${edge.target}`} 
+          <g key={edgeId} 
+             id={edgeId}
+             data-source={edge.source}
+             data-target={edge.target}
              onClick={(e) => {
                e.stopPropagation();
                onEdgeClick(edge);

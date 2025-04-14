@@ -19,6 +19,7 @@ interface GraphNodeProps {
   totalNodesInView: number;
   isInteractive?: boolean;
   zoomScale?: number;
+  expandingNode?: string | null;
 }
 
 // Extracted helper components and functions
@@ -396,6 +397,7 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
   totalNodesInView,
   isInteractive = true,
   zoomScale = 1,
+  expandingNode = null,
 }) => {
   // State
   const [showMenu, setShowMenu] = useState(false);
@@ -465,14 +467,21 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
     const sizeAdjustment = totalNodesInView > 50 ? Math.max(0.7, 1 - (totalNodesInView / 300)) : 1;
     const nodeWidth = baseNodeWidth * sizeScale * sizeAdjustment;
     
-    setTooltipPosition({ x: position.x + nodeWidth / 2, y: position.y - 20 });
-  }, [position.x, position.y, sizeScale, totalNodesInView]);
+    // Only update tooltip position if the tooltip is shown
+    if (showTooltip) {
+      setTooltipPosition({ x: position.x + nodeWidth / 2, y: position.y - 20 });
+    }
+  }, [position.x, position.y, sizeScale, totalNodesInView, showTooltip]);
 
   // Calculate visual properties
   const isDark = theme === 'dark';
   const baseNodeWidth = 180;
+  const baseFontSize = 14; // Define the base font size
   const sizeAdjustment = totalNodesInView > 50 ? Math.max(0.7, 1 - (totalNodesInView / 300)) : 1;
   const nodeWidth = baseNodeWidth * sizeScale * sizeAdjustment;
+  
+  // Check if this node is currently expanding
+  const isExpanding = expandingNode === node.id;
   
   // Get display values from node
   const displayName = node.name || node.title || `Node ${node.id}`;
@@ -485,6 +494,10 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
     return path.length > 25 ? '...' + path.substring(path.length - 25) : path;
   })();
 
+  // Generate animation classes based on node state
+  const pulseAnimation = isExpanding ? 'animate-pulse' : '';
+  const borderAnimation = isExpanding ? 'border-2 shadow-lg' : 'border';
+
   // Generate styles
   const highlightStyle = isHighlighted
     ? `ring-4 ${isDark ? 'ring-blue-500/70' : 'ring-blue-500'} scale-110 z-20`
@@ -492,7 +505,7 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
     ? `ring-2 ${isDark ? 'ring-green-500/70' : 'ring-green-500'} z-10`
     : '';
 
-  const nodeColor = getNodeColor(displayType, theme);
+  const nodeColor = getNodeColor(displayType || 'unknown', theme);
   const shadowStyle = isDark 
     ? isDragging 
       ? 'shadow-lg shadow-black/40' 
@@ -504,75 +517,83 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
 
   return (
     <div
-      ref={nodeRef}
-      className={`absolute p-3 rounded-lg border-2 ${nodeColor} ${shadowStyle} transition-all duration-200 ${isInteractive ? 'cursor-pointer' : 'cursor-default'} select-none
-      ${highlightStyle} ${dragStyle} pointer-events-auto`}
+      className={`absolute cursor-pointer transition-transform duration-300 ease-in-out ${pulseAnimation}`}
       style={{
-        left: position.x,
-        top: position.y,
-        transform: 'translate(-50%, -50%)',
-        width: `${nodeWidth}px`,
-        zIndex: isDragging || showMenu || isHighlighted ? 50 : isPathHighlighted ? 5 : 1,
-        touchAction: 'none',
+        transform: `translate(${position.x}px, ${position.y}px)`,
+        transformOrigin: 'center',
       }}
+      ref={nodeRef}
+      onClick={handleNodeClick}
       onMouseDown={handleMouseDown}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={handleNodeClick}
     >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <NodeIcon type={displayType} />
-          <span className="font-medium text-sm truncate">{displayName}</span>
+      {/* Tooltip */}
+      <NodeTooltip node={node} position={tooltipPosition} show={showTooltip} theme={theme} />
+      
+      {/* The node itself */}
+      <div 
+        className={`
+          ${nodeColor} 
+          ${highlightStyle}
+          ${isPathHighlighted ? 'shadow-md ' + (theme === 'dark' ? 'shadow-blue-400/30' : 'shadow-blue-500/30') : ''}
+          rounded-lg ${borderAnimation} flex items-center justify-between gap-2 transition-all
+          ${shadowStyle} ${dragStyle}
+          group
+        `}
+        style={{ 
+          width: nodeWidth,
+          fontSize: baseFontSize,
+          padding: 10
+        }}
+        data-node-id={node.id}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 overflow-hidden">
+            <NodeIcon type={displayType} />
+            <span className="font-medium text-sm truncate">{displayName}</span>
+          </div>
+          {isInteractive && (
+            <button
+              className={`p-1 rounded-full transition-colors node-menu
+                ${isDark ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}
+              onClick={handleMenuClick}
+              aria-label="Node options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        {isInteractive && (
-          <button
-            className={`p-1 rounded-full transition-colors node-menu
-              ${isDark ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}
-            onClick={handleMenuClick}
-            aria-label="Node options"
-          >
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+        
+        {displayPath && (
+          <div className="text-xs opacity-70 mt-1 truncate">
+            {displayPath}
+          </div>
         )}
-      </div>
-      
-      {displayPath && (
-        <div className="text-xs opacity-70 mt-1 truncate">
-          {displayPath}
+        
+        <div className={`text-xs ${isDark ? 'bg-gray-800/50' : 'bg-white/50'} rounded px-2 py-1 mt-1`}>
+          {displayType}
         </div>
-      )}
-      
-      <div className={`text-xs ${isDark ? 'bg-gray-800/50' : 'bg-white/50'} rounded px-2 py-1 mt-1`}>
-        {displayType}
+
+        {/* Context Menu */}
+        <NodeMenu 
+          node={node}
+          show={showMenu}
+          theme={theme}
+          onShowDetails={onNodeClick || (() => {})}
+          onShowDependencies={onShowDependencies || (() => {})}
+          onShowDependents={onShowDependents || (() => {})}
+          onClose={() => setShowMenu(false)}
+        />
+
+        {/* Inline Details for small graphs */}
+        <NodeInlineDetails
+          node={node}
+          nodeWidth={nodeWidth}
+          theme={theme}
+          show={totalNodesInView <= 3}
+        />
       </div>
-
-      {/* Context Menu */}
-      <NodeMenu 
-        node={node}
-        show={showMenu}
-        theme={theme}
-        onShowDetails={onNodeClick || (() => {})}
-        onShowDependencies={onShowDependencies || (() => {})}
-        onShowDependents={onShowDependents || (() => {})}
-        onClose={() => setShowMenu(false)}
-      />
-
-      {/* Inline Details for small graphs */}
-      <NodeInlineDetails
-        node={node}
-        nodeWidth={nodeWidth}
-        theme={theme}
-        show={totalNodesInView <= 3}
-      />
-
-      {/* Tooltip for hovering on larger graphs */}
-      <NodeTooltip
-        node={node}
-        position={tooltipPosition}
-        show={showTooltip && totalNodesInView > 3}
-        theme={theme}
-      />
     </div>
   );
 };

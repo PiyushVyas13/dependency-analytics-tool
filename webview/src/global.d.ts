@@ -13,6 +13,7 @@ interface Window {
     focusedNodeId?: string;
     fullGraphAvailable?: boolean;
   };
+  _pendingGraphData: any | null;
 }
 
 // Enable JSX

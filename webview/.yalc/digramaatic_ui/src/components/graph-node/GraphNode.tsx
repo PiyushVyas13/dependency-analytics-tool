@@ -22,6 +22,13 @@ interface GraphNodeProps {
   totalNodesInView: number;
   isInteractive?: boolean;
   zoomScale?: number;
+  onFocusNode?: (node: Node) => void;
+  onOpenSourceFile?: (node: Node) => void;
+  onRevealInFileTree?: (node: Node) => void;
+  onExpandNode?: (node: Node) => void;
+  onGoToParent?: (node: Node) => void;
+  onCopyImportPath?: (node: Node) => void;
+  expandingNode?: string | null;
 }
 
 /**
@@ -41,11 +48,20 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
   totalNodesInView,
   isInteractive = true,
   zoomScale = 1,
+  onFocusNode,
+  onOpenSourceFile,
+  onRevealInFileTree,
+  onExpandNode,
+  onGoToParent,
+  onCopyImportPath,
+  expandingNode = null
 }) => {
   // State
   const [showMenu, setShowMenu] = useState(false);
   const [showTooltip, setShowTooltip] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   
   // Refs
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -76,12 +92,61 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
     startDrag(e, position);
   };
 
+  // Handle context menu (right click)
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Close dropdown menu if open
+    setShowMenu(false);
+    setShowContextMenu(false); // Ensure context menu is closed before showing a new one
+    
+    // Get the exact cursor position
+    const x = e.clientX;
+    const y = e.clientY;
+    
+    // Get viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    // Menu dimensions (approximate)
+    const menuWidth = 200;
+    const menuHeight = 350; // Approximation based on all menu items
+    
+    // Adjust position to keep menu in viewport
+    let adjustedX = x;
+    let adjustedY = y;
+    
+    // If menu would extend beyond right edge
+    if (x + menuWidth > viewportWidth) {
+      adjustedX = viewportWidth - menuWidth - 10; // Keep 10px margin
+    }
+    
+    // If menu would extend beyond bottom edge
+    if (y + menuHeight > viewportHeight) {
+      adjustedY = viewportHeight - menuHeight - 10; // Keep 10px margin
+    }
+    
+    // Ensure position is never negative
+    adjustedX = Math.max(10, adjustedX);
+    adjustedY = Math.max(10, adjustedY);
+    
+    // Set the position and show the context menu
+    // Adding a small delay prevents the immediate click-away from the document listener
+    setTimeout(() => {
+      setContextMenuPosition({ x: adjustedX, y: adjustedY });
+      setShowContextMenu(true);
+    }, 0);
+  };
+
   // Handle menu toggle
   const handleMenuClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setShowMenu(!showMenu);
     setShowTooltip(false);
+    // Close context menu if open
+    setShowContextMenu(false);
   };
 
   // Tooltip show/hide handlers
@@ -94,6 +159,21 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
   const handleMouseLeave = () => {
     setShowTooltip(false);
   };
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleDocumentClick = () => {
+      if (showContextMenu) {
+        setShowContextMenu(false);
+      }
+    };
+
+    document.addEventListener('click', handleDocumentClick);
+    
+    return () => {
+      document.removeEventListener('click', handleDocumentClick);
+    };
+  }, [showContextMenu]);
 
   // Cleanup tooltip timeout
   useEffect(() => {
@@ -118,6 +198,10 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
   const baseNodeWidth = 180;
   const sizeAdjustment = totalNodesInView > 50 ? Math.max(0.7, 1 - (totalNodesInView / 300)) : 1;
   const nodeWidth = baseNodeWidth * sizeScale * sizeAdjustment;
+  
+  // Check if this node is currently expanding
+  const isExpanding = expandingNode === node.id;
+  const pulseAnimation = isExpanding ? 'animate-pulse' : '';
   
   // Get display values from node
   const displayName = node.name || node.title || `Node ${node.id}`;
@@ -151,7 +235,7 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
     <div
       ref={nodeRef}
       className={`absolute p-3 rounded-lg border-2 ${nodeColor} ${shadowStyle} transition-all duration-200 ${isInteractive ? 'cursor-pointer' : 'cursor-default'} select-none
-      ${highlightStyle} ${dragStyle} pointer-events-auto`}
+      ${highlightStyle} ${dragStyle} pointer-events-auto ${pulseAnimation}`}
       style={{
         left: position.x,
         top: position.y,
@@ -164,6 +248,7 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={handleNodeClick}
+      onContextMenu={handleContextMenu}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-hidden">
@@ -192,7 +277,7 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
         {displayType}
       </div>
 
-      {/* Context Menu */}
+      {/* Dropdown Menu */}
       <NodeMenu 
         node={node}
         show={showMenu}
@@ -201,6 +286,31 @@ export const GraphNode: React.FC<GraphNodeProps> = ({
         onShowDependencies={onShowDependencies || (() => {})}
         onShowDependents={onShowDependents || (() => {})}
         onClose={() => setShowMenu(false)}
+        onFocusNode={onFocusNode}
+        onOpenSourceFile={onOpenSourceFile}
+        onRevealInFileTree={onRevealInFileTree}
+        onExpandNode={onExpandNode}
+        onGoToParent={onGoToParent}
+        onCopyImportPath={onCopyImportPath}
+      />
+
+      {/* Context Menu (Right Click) */}
+      <NodeMenu 
+        node={node}
+        show={showContextMenu}
+        theme={theme}
+        onShowDetails={onNodeClick || (() => {})}
+        onShowDependencies={onShowDependencies || (() => {})}
+        onShowDependents={onShowDependents || (() => {})}
+        onClose={() => setShowContextMenu(false)}
+        onFocusNode={onFocusNode}
+        onOpenSourceFile={onOpenSourceFile}
+        onRevealInFileTree={onRevealInFileTree}
+        onExpandNode={onExpandNode}
+        onGoToParent={onGoToParent}
+        onCopyImportPath={onCopyImportPath}
+        position="contextmenu"
+        contextMenuPosition={contextMenuPosition}
       />
 
       {/* Inline Details for small graphs */}

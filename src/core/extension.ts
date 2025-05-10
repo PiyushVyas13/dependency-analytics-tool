@@ -74,7 +74,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully loaded standardized dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully loaded standardized dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -102,7 +107,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully converted and loaded dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully converted and loaded dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -130,7 +140,12 @@ export function activate(context: vscode.ExtensionContext) {
                     // Update the tree views
                     dependencyTreeProvider.setGraph(currentDependencyGraph);
                     
-                    outputChannel.appendLine(`Successfully converted and loaded legacy dependencies with ${allNodes.length} nodes`);
+                    // Calculate and log metrics
+                    const nodeCount = allNodes.length;
+                    const maxDepth = calculateMaxDepth(currentDependencyGraph);
+                    outputChannel.appendLine(`Successfully converted and loaded legacy dependencies with ${nodeCount} nodes and maximum depth of ${maxDepth}`);
+                    console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+                    
                     return true;
                 }
             } catch (error) {
@@ -143,8 +158,15 @@ export function activate(context: vscode.ExtensionContext) {
     
     // Start the analysis process
     async function startAnalysis(): Promise<void> {
+        // Add overall performance timing
+        console.log(`[Performance] Starting dependency analytics process`);
+        const overallStartTime = performance.now();
+        
         // Check if dependencies already exist
         if (await loadExistingDependencies()) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Loaded existing dependencies in ${overallElapsedTime.toFixed(2)}ms`);
             vscode.window.showInformationMessage('Loaded existing dependency analysis.');
             return;
         }
@@ -152,6 +174,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Select the root folder
         const rootFolder = await projectDetector.selectRootFolder();
         if (!rootFolder) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis cancelled after ${overallElapsedTime.toFixed(2)}ms - no folder selected`);
             vscode.window.showErrorMessage('No folder selected for analysis.');
             return;
         }
@@ -159,6 +184,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Detect the project type
         const projectType = await projectDetector.detectProjectType(rootFolder);
         if (!projectType) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis failed after ${overallElapsedTime.toFixed(2)}ms - could not detect project type`);
             vscode.window.showErrorMessage('Could not detect project type. Please make sure your project structure is supported.');
             return;
         }
@@ -190,8 +218,22 @@ export function activate(context: vscode.ExtensionContext) {
             // Update the tree views
             dependencyTreeProvider.setGraph(currentDependencyGraph);
             
-            vscode.window.showInformationMessage('Dependency analysis completed successfully.');
+            // Calculate graph metrics
+            const nodeCount = currentDependencyGraph.nodes.length;
+            const maxDepth = calculateMaxDepth(currentDependencyGraph);
+            
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis completed successfully in ${overallElapsedTime.toFixed(2)}ms`);
+            console.log(`[Metrics] Graph contains ${nodeCount} nodes with maximum depth of ${maxDepth}`);
+            
+            // Display performance information in the VS Code UI
+            vscode.window.showInformationMessage(`Dependency analysis completed in ${(overallElapsedTime / 1000).toFixed(2)} seconds. Found ${nodeCount} nodes with max depth of ${maxDepth}.`);
         } catch (error) {
+            const overallEndTime = performance.now();
+            const overallElapsedTime = overallEndTime - overallStartTime;
+            console.log(`[Performance] Dependency analysis failed after ${overallElapsedTime.toFixed(2)}ms with error: ${error}`);
+            
             outputChannel.appendLine(`Error analyzing dependencies: ${error}`);
             vscode.window.showErrorMessage(`Error analyzing dependencies: ${error}`);
         }
@@ -498,4 +540,57 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     // Cleanup
+}
+
+// Calculate the maximum depth of the dependency graph
+function calculateMaxDepth(graph: Graph): number {
+    if (!graph || !graph.edges || graph.edges.length === 0 || !graph.nodes || graph.nodes.length === 0) {
+        return 0;
+    }
+    
+    // Create adjacency list from edges
+    const adjacencyList = new Map<string, string[]>();
+    
+    // Initialize map with all nodes
+    graph.nodes.forEach(node => {
+        adjacencyList.set(node.id, []);
+    });
+    
+    // Add edges to adjacency list
+    graph.edges.forEach(edge => {
+        const sourceDependencies = adjacencyList.get(edge.source) || [];
+        sourceDependencies.push(edge.target);
+        adjacencyList.set(edge.source, sourceDependencies);
+    });
+    
+    // Track visited nodes and their depths
+    const visited = new Map<string, number>();
+    let maxDepth = 0;
+    
+    // Perform DFS from each node to find the longest path
+    const dfs = (nodeId: string, depth: number): void => {
+        // If already visited with a higher or equal depth, skip
+        if (visited.has(nodeId) && visited.get(nodeId)! >= depth) {
+            return;
+        }
+        
+        // Update max depth
+        maxDepth = Math.max(maxDepth, depth);
+        
+        // Mark as visited with current depth
+        visited.set(nodeId, depth);
+        
+        // Visit all dependencies
+        const dependencies = adjacencyList.get(nodeId) || [];
+        for (const dependencyId of dependencies) {
+            dfs(dependencyId, depth + 1);
+        }
+    };
+    
+    // Start DFS from each node
+    graph.nodes.forEach(node => {
+        dfs(node.id, 0);
+    });
+    
+    return maxDepth;
 }

@@ -44,7 +44,26 @@ export class ParserRegistry {
         if (!parser) {
             throw new Error(`No parser available for project type: ${projectType.name}`);
         }
+
+        // Add performance measurement
+        console.log(`[Performance] Starting parse for ${projectType.name} (${projectType.language})`);
+        const startTime = performance.now();
         
-        return await parser.parse(projectType);
+        try {
+            const result = await parser.parse(projectType);
+            
+            // Calculate and log the elapsed time
+            const endTime = performance.now();
+            const elapsedTime = endTime - startTime;
+            console.log(`[Performance] Completed parse for ${projectType.name} (${projectType.language}) in ${elapsedTime.toFixed(2)}ms`);
+            
+            return result;
+        } catch (error) {
+            // Log timing even if there's an error
+            const endTime = performance.now();
+            const elapsedTime = endTime - startTime;
+            console.error(`[Performance] Failed parse for ${projectType.name} (${projectType.language}) after ${elapsedTime.toFixed(2)}ms`);
+            throw error;
+        }
     }
 }
